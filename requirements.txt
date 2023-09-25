@@ -2,8 +2,4 @@
 paytmchecksum~=1.7.0
 razorpay~=1.2.0
 stripe~=2.56.0
-<<<<<<< HEAD
 braintree~=4.20.0
-=======
-braintree~=4.8.0
->>>>>>> 15bd4b4 (Merge pull request #26 from phot0n/fix-14-ci)
