@@ -245,24 +245,30 @@ class StripeSettings(Document):
                     err_text = str(e)
                     title = "Stripe CardError"
                     frappe.log_error(err_text[:140], title)
+                    
+                    # Marcar el Integration Request como Failed
+                    self.integration_request.db_set("status", "Failed", update_modified=False)
+                    
+                    # Detectar si es error de 3DS
                     if "requires authentication" in err_text.lower() or "authentication required" in err_text.lower():
-                        frappe.throw(
-                            _(
-                                "Tu banco requiere autenticación adicional (3D Secure) para procesar este pago. "
-                                "Por favor, completa la autenticación en la ventana del banco o intenta con otra tarjeta."
-                            )
-                        )
+                        self.flags.payment_failed_reason = "3ds_required"
+                        self.flags.status_changed_to = "Failed"
+                        return self.finalize_request()
                     else:
-                        frappe.throw(_("Tu tarjeta fue rechazada. Por favor, contacta con tu banco o intenta otro método."))
+                        self.flags.payment_failed_reason = "card_declined"
+                        self.flags.status_changed_to = "Failed"
+                        return self.finalize_request()
             except Exception:
-                # not a stripe-specific CardError or stripe not importable here, continue to generic handler
                 pass
 
-            # Generic exception handler: log truncated traceback and show friendly message
+            # Generic exception handler
             title = "Stripe create_charge_on_stripe error"
             traceback_snippet = frappe.get_traceback()[:2000]
             frappe.log_error(traceback_snippet, title[:140])
-            frappe.throw(_("Ha ocurrido un error procesando el pago. Por favor, contacta con soporte."))
+            self.integration_request.db_set("status", "Failed", update_modified=False)
+            self.flags.payment_failed_reason = "generic_error"
+            self.flags.status_changed_to = "Failed"
+            return self.finalize_request()
 
         return self.finalize_request()
 
@@ -300,21 +306,194 @@ class StripeSettings(Document):
                 redirect_url = self.redirect_url
                 redirect_to = None
         else:
-            redirect_url = "payment-failed"
+            # Payment failed - construct redirect with context
+            redirect_params = {
+                "doctype": self.data.get("reference_doctype", ""),
+                "docname": self.data.get("reference_docname", ""),
+                "reason": getattr(self.flags, "payment_failed_reason", "unknown"),
+                "amount": self.data.get("amount", ""),
+                "currency": self.data.get("currency", "")
+            }
+            redirect_url = "payment-failed?{}".format(urlencode(redirect_params))
 
-        if redirect_to and "?" in redirect_url:
-            redirect_url += "&" + urlencode({"redirect_to": redirect_to})
-        else:
-            redirect_url += "?" + urlencode({"redirect_to": redirect_to})
-
+        if redirect_to:
+            redirect_url += ("&" if "?" in redirect_url else "?") + urlencode({"redirect_to": redirect_to})
         if redirect_message:
             redirect_url += "&" + urlencode({"redirect_message": redirect_message})
 
         return {"redirect_to": redirect_url, "status": status}
 
 
-def get_gateway_controller(doctype, docname, payment_gateway=None):
-    if not payment_gateway:
-        reference_doc = frappe.get_doc(doctype, docname)
-        payment_gateway = reference_doc.payment_gateway
-    return frappe.db.get_value("Payment Gateway", payment_gateway, "gateway_controller")
+@frappe.whitelist(allow_guest=True)
+def request_bank_transfer(doctype, docname):
+    """
+    Registra una solicitud de transferencia bancaria y envía email con instrucciones
+    """
+    if not doctype or not docname:
+        frappe.throw(_("Missing document information"))
+    
+    # Verificar que el documento existe
+    try:
+        doc = frappe.get_doc(doctype, docname)
+    except Exception:
+        frappe.throw(_("Document not found"))
+    
+    # Verificar permisos (si es guest, verificar que tenga acceso al documento)
+    if frappe.session.user == "Guest":
+        # Para documentos públicos como Sales Order de carrito web
+        if not doc.has_website_permission(frappe.session.user):
+            frappe.throw(_("Not permitted"), frappe.PermissionError)
+    
+    # Obtener configuración de transferencia bancaria
+    bank_settings = frappe.get_single("Bank Transfer Settings")
+    
+    if not bank_settings or not bank_settings.enabled:
+        frappe.throw(_("Bank transfer payment method is not configured"))
+    
+    # Crear Integration Request para tracking
+    integration_request = frappe.get_doc({
+        "doctype": "Integration Request",
+        "integration_type": "Remote",
+        "integration_request_service": "Bank Transfer",
+        "reference_doctype": doctype,
+        "reference_docname": docname,
+        "status": "Queued",
+        "data": frappe.as_json({
+            "amount": doc.grand_total if hasattr(doc, "grand_total") else 0,
+            "currency": doc.currency if hasattr(doc, "currency") else "EUR",
+            "customer": doc.customer if hasattr(doc, "customer") else "",
+            "customer_email": doc.contact_email if hasattr(doc, "contact_email") else doc.email_id if hasattr(doc, "email_id") else ""
+        })
+    })
+    integration_request.insert(ignore_permissions=True)
+    
+    # Enviar email con instrucciones
+    try:
+        send_bank_transfer_instructions(doc, bank_settings, integration_request.name)
+        integration_request.db_set("status", "Completed", update_modified=False)
+        
+        # Marcar Sales Order como "On Hold" si es Sales Order
+        if doctype == "Sales Order":
+            # IMPORTANTE: Usar ignore_permissions y actualizar con el método correcto
+            frappe.db.set_value(
+                "Sales Order", 
+                docname, 
+                "hold", 
+                _("Awaiting bank transfer payment - Ref: {0}").format(integration_request.name),
+                update_modified=False
+            )
+            
+            # Añadir comentario en el timeline explicando el cambio
+            doc.add_comment(
+                "Info",
+                text=_("Order placed On Hold - Awaiting bank transfer payment confirmation. Payment reference: {0}").format(
+                    integration_request.name
+                )
+            )
+        
+        frappe.db.commit()
+        
+        return {
+            "success": True,
+            "message": _("Bank transfer instructions have been sent to your email"),
+            "redirect_to": f"/bank-transfer-requested?doctype={doctype}&docname={docname}"
+        }
+        
+    except Exception as e:
+        integration_request.db_set("status", "Failed", update_modified=False)
+        frappe.log_error(frappe.get_traceback(), "Bank Transfer Request Failed")
+        frappe.throw(_("Failed to send email. Please contact support."))
+
+def get_customer_email(doc):
+    """
+    Obtiene el email del cliente de forma simple y directa
+    """
+    recipient_email = None
+    
+    # 1. Payment Request - campo email_to
+    if doc.doctype == "Payment Request" and hasattr(doc, "email_to") and doc.email_to:
+        recipient_email = doc.email_to
+        frappe.logger().info(f"Email found in Payment Request.email_to: {recipient_email}")
+        return recipient_email
+    
+    # 2. Sales Order y otros - campo contact_email
+    if hasattr(doc, "contact_email") and doc.contact_email:
+        recipient_email = doc.contact_email
+        frappe.logger().info(f"Email found in {doc.doctype}.contact_email: {recipient_email}")
+        return recipient_email
+    
+    # 3. Cualquier doctype - campo email_id
+    if hasattr(doc, "email_id") and doc.email_id:
+        recipient_email = doc.email_id
+        frappe.logger().info(f"Email found in {doc.doctype}.email_id: {recipient_email}")
+        return recipient_email
+    
+    # 4. Fallback: owner del documento (usuario que lo creó)
+    if hasattr(doc, "owner") and doc.owner and doc.owner != "Administrator":
+        # Verificar que el owner sea un email válido
+        if "@" in doc.owner:
+            recipient_email = doc.owner
+            frappe.logger().info(f"Email found in {doc.doctype}.owner: {recipient_email}")
+            return recipient_email
+    
+    # 5. Último recurso: buscar en Contact vinculado (solo si realmente existe contact_person)
+    if hasattr(doc, "contact_person") and doc.contact_person:
+        try:
+            contact = frappe.get_doc("Contact", doc.contact_person)
+            if contact.email_id:
+                recipient_email = contact.email_id
+                frappe.logger().info(f"Email found in Contact.email_id: {recipient_email}")
+                return recipient_email
+            # Buscar en email_ids child table
+            if hasattr(contact, "email_ids") and contact.email_ids:
+                for email_row in contact.email_ids:
+                    if email_row.email_id:
+                        recipient_email = email_row.email_id
+                        frappe.logger().info(f"Email found in Contact.email_ids: {recipient_email}")
+                        return recipient_email
+        except Exception as e:
+            frappe.logger().error(f"Error fetching contact: {str(e)}")
+    
+    frappe.logger().warning(f"No email found for document {doc.doctype} - {doc.name}")
+    return recipient_email
+
+def send_bank_transfer_instructions(doc, bank_settings, integration_request_name):
+    """
+    Envía email con instrucciones de transferencia bancaria
+    """
+    recipient_email = get_customer_email(doc)
+    
+    if not recipient_email:
+        frappe.throw(_("Customer email not found. Please ensure the customer has a valid email address in their contact details."))
+    
+    # Preparar contexto para el template
+    context = {
+        "doc": doc,
+        "bank_name": bank_settings.bank_name,
+        "account_holder": bank_settings.account_holder,
+        "iban": bank_settings.iban,
+        "bic_swift": bank_settings.bic_swift,
+        "amount": doc.grand_total if hasattr(doc, "grand_total") else 0,
+        "currency": doc.currency if hasattr(doc, "currency") else "EUR",
+        "reference": f"{doc.doctype}-{doc.name}",
+        "payment_reference": integration_request_name,
+        "reply_to_email": bank_settings.reply_to_email or frappe.get_value("Email Account", {"default_outgoing": 1}, "email_id"),
+        "additional_instructions": bank_settings.additional_instructions or ""
+    }
+    
+    # Enviar email
+    frappe.sendmail(
+        recipients=[recipient_email],
+        subject=_("Bank Transfer Instructions - Order {0}").format(doc.name),
+        template="bank_transfer_instructions",
+        args=context,
+        reference_doctype=doc.doctype,
+        reference_name=doc.name,
+        reply_to=context["reply_to_email"]
+    )
+
+def get_gateway_controller(doctype, docname):
+    reference_doc = frappe.get_doc(doctype, docname)
+    return frappe.db.get_value(
+        "Payment Gateway", reference_doc.payment_gateway, "gateway_controller"
+    )

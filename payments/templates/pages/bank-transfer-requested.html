@@ -1,0 +1,51 @@
+{% extends "templates/web.html" %}
+
+{% block title %}{{ _("Bank Transfer Requested") }}{% endblock %}
+
+{%- block page_content -%}
+<div class='page-card'>
+    <div class='page-card-head'>
+        <span class='indicator blue'>
+            {{ _("Bank Transfer Instructions Sent") }}</span>
+    </div>
+    
+    {% set doctype = frappe.form_dict.get('doctype', '') %}
+    {% set docname = frappe.form_dict.get('docname', '') %}
+    
+    <div style="text-align: center; padding: 20px;">
+        <svg class="icon icon-xl" style="color: #2490ef;"><use href="#icon-mail"></use></svg>
+        <h3>{{ _("Check Your Email") }}</h3>
+    </div>
+    
+    <p>{{ _("We have sent detailed bank transfer instructions to your email address.") }}</p>
+    
+    <div class="alert alert-info">
+        <h4>{{ _("Next Steps") }}:</h4>
+        <ol>
+            <li>{{ _("Check your email inbox (and spam folder)") }}</li>
+            <li>{{ _("Make the bank transfer using the provided details") }}</li>
+            <li>{{ _("Reply to the email with your payment receipt/proof") }}</li>
+            <li>{{ _("We will process your order within 1-2 business days") }}</li>
+        </ol>
+    </div>
+    
+    {% if doctype and docname %}
+    <div style="margin-top: 20px; text-align: center;">
+        <!-- <a href="/{{ doctype }}/{{ docname }}" class="btn btn-primary">
+            {{ _("View Order Details") }}
+        </a> -->
+        <a href="/shop/" class="btn btn-default">
+            {{ _("Back to Home") }}
+        </a>
+    </div>
+    {% endif %}
+</div>
+
+<style>
+.hero-and-content {
+    background-color: #f5f7fa;
+}
+{% include "templates/styles/card_style.css" %}
+</style>
+
+{% endblock %}

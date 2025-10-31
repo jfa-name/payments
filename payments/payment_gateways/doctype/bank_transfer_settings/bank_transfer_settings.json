@@ -1,0 +1,96 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2025-10-30 16:39:26.449066",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "bank_details_section",
+  "bank_name",
+  "account_holder",
+  "iban",
+  "bic_swift",
+  "column_break_1",
+  "reply_to_email",
+  "additional_instructions"
+ ],
+ "fields": [
+  {
+   "default": "0",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "bank_details_section",
+   "fieldtype": "Section Break",
+   "label": "Bank Details"
+  },
+  {
+   "fieldname": "bank_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Bank Name",
+   "reqd": 1
+  },
+  {
+   "fieldname": "account_holder",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Account Holder",
+   "reqd": 1
+  },
+  {
+   "fieldname": "iban",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "IBAN",
+   "reqd": 1
+  },
+  {
+   "fieldname": "bic_swift",
+   "fieldtype": "Data",
+   "label": "BIC/SWIFT"
+  },
+  {
+   "fieldname": "column_break_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "reply_to_email",
+   "fieldtype": "Data",
+   "label": "Reply To Email",
+   "options": "Email"
+  },
+  {
+   "fieldname": "additional_instructions",
+   "fieldtype": "Small Text",
+   "label": "Additional Instructions"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2025-10-30 16:39:26.449066",
+ "modified_by": "Administrator",
+ "module": "Payment Gateways",
+ "name": "Bank Transfer Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}

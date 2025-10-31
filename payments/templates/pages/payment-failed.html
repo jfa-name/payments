@@ -4,19 +4,139 @@
 
 {%- block page_content -%}
 <div class='page-card'>
-	<div class='page-card-head'>
-		<span class='indicator red'>
-			{{ _("Payment Failed") }}</span>
-	</div>
-	<p>{{ _("Your payment has failed.") }}</p>
-	<div><a href='{{ frappe.form_dict.redirect_to or "/" }}' class='btn btn-primary btn-sm'>
-		{{ _("Continue") }}</a></div>
+    <div class='page-card-head'>
+        <span class='indicator red'>
+            {{ _("Payment Failed") }}</span>
+    </div>
+    
+    {% set reason = frappe.form_dict.get('reason', 'unknown') %}
+    {% set doctype = frappe.form_dict.get('doctype', '') %}
+    {% set docname = frappe.form_dict.get('docname', '') %}
+    
+    {% if reason == '3ds_required' %}
+        <h4>{{ _("Authentication Required") }}</h4>
+        <p>{{ _("Your bank requires additional authentication (3D Secure) to process this payment. Unfortunately, this payment method does not currently support 3D Secure authentication.") }}</p>
+        <p><strong>{{ _("Please choose an alternative payment method:") }}</strong></p>
+    {% elif reason == 'card_declined' %}
+        <h4>{{ _("Card Declined") }}</h4>
+        <p>{{ _("Your card was declined. Please contact your bank or try another payment method.") }}</p>
+    {% else %}
+        <p>{{ _("Your payment has failed.") }}</p>
+        <p>{{ _("Please try again or use an alternative payment method.") }}</p>
+    {% endif %}
+    
+    <div class="payment-options" style="margin-top: 20px;">
+        {% if doctype and docname %}
+            {# Obtener métodos de pago alternativos disponibles #}
+            {% set payment_gateways = frappe.get_all('Payment Gateway',
+                fields=['name', 'gateway_controller'],
+                order_by='name') %}
+            
+            {% for gateway in payment_gateways %}
+                <!-- {% if 'PayPal' in gateway.name %} -->
+                    <!-- <a href="/api/method/payments.utils.make_payment_request?dn={{ docname }}&dt={{ doctype }}&submit_doc=1&gateway={{ gateway.name }}" 
+                       class="btn btn-primary btn-lg" style="margin: 5px;">
+                        <svg class="icon icon-sm" style=""><use href="#icon-credit-card"></use></svg>
+                        {{ gateway.name }}
+                    </a> -->
+                <!-- {% endif %} -->
+            {% endfor %}
+            
+            {# Botón para transferencia bancaria si está habilitado#}
+            {% set bank_transfer_settings = frappe.get_doc('Bank Transfer Settings') %}
+            {% if bank_transfer_settings.enabled %}
+            <div style="margin-top: 15px;">
+                <button class="btn btn-secondary btn-lg" 
+                        onclick="requestBankTransfer('{{ doctype }}', '{{ docname }}')" 
+                        style="margin: 5px;">
+                    <svg class="icon icon-sm"><use href="#icon-university"></use></svg>
+                    {{ _("Wire Transfer") }}
+                </button>
+            </div>
+            {% endif %}
+            {# Botón para ver los detalles de la Orden de Venta #}
+            <!-- <div style="margin-top: 15px;">
+                <a href="/{{ doctype }}/{{ docname }}" class="btn btn-default">
+                    {{ _("View Order Details") }}
+                </a>
+            </div> -->
+        {% else %}
+            <div>
+                <a href='{{ frappe.form_dict.redirect_to or "/shop/cart" }}' class='btn btn-primary btn-sm'>
+                    {{ _("Continue") }}
+                </a>
+            </div>
+        {% endif %}
+    </div>
+    
+    {% if reason == '3ds_required' %}
+        <div class="alert alert-info" style="margin-top: 20px;">
+            <strong>{{ _("Note:") }}</strong> {{ _("We are working on adding support for 3D Secure payments. In the meantime, please use one of the alternative payment methods above.") }}
+        </div>
+    {% endif %}
 </div>
+
 <style>
 .hero-and-content {
-	background-color: #f5f7fa;
+    background-color: #f5f7fa;
 }
 {% include "templates/styles/card_style.css" %}
-</style>
 
+.payment-options {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 500px;
+}
+
+.payment-options .btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+@media (max-width: 768px) {
+    .payment-options {
+        width: 100%;
+    }
+}
+</style>
+<script>
+function requestBankTransfer(doctype, docname) {
+    const btn = event.target;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> {{ _("Processing...") }}';
+    
+    frappe.call({
+        method: 'payments.payment_gateways.doctype.stripe_settings.stripe_settings.request_bank_transfer',
+        args: {
+            doctype: doctype,
+            docname: docname
+        },
+        callback: function(r) {
+            if (r.message && r.message.success) {
+                frappe.show_alert({
+                    message: r.message.message,
+                    indicator: 'green'
+                }, 3);
+                
+                if (r.message.redirect_to) {
+                    setTimeout(function() {
+                        window.location.href = r.message.redirect_to;
+                    }, 1500);
+                }
+            }
+        },
+        error: function(r) {
+            btn.disabled = false;
+            btn.innerHTML = '<svg class="icon icon-sm"><use href="#icon-university"></use></svg> {{ _("Wire Transfer") }}';
+            frappe.show_alert({
+                message: __('Failed to process request. Please try again.'),
+                indicator: 'red'
+            }, 5);
+        }
+    });
+}
+</script>
 {% endblock %}
