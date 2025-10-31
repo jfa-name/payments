@@ -1,0 +1,70 @@
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+    <h2 style="color: #333;">{{ _("Bank Transfer Payment Instructions") }}</h2>
+    
+    <p>{{ _("Dear Customer") }},</p>
+    
+    <p>{{ _("Thank you for your order. Please find below the bank details to complete your payment.") }}</p>
+    
+    <div style="background-color: #f5f7fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+        <h3 style="margin-top: 0; color: #2490ef;">{{ _("Payment Details") }}</h3>
+        
+        <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+                <td style="padding: 8px 0; font-weight: bold; width: 40%;">{{ _("Amount to Pay") }}:</td>
+                <td style="padding: 8px 0;">{{ frappe.utils.fmt_money(amount, currency=currency) }}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 0; font-weight: bold;">{{ _("Order Reference") }}:</td>
+                <td style="padding: 8px 0;">{{ reference }}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 0; font-weight: bold;">{{ _("Payment Reference") }}:</td>
+                <td style="padding: 8px 0; color: #e74c3c;"><strong>{{ payment_reference }}</strong></td>
+            </tr>
+        </table>
+    </div>
+    
+    <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0;">
+        <h3 style="margin-top: 0; color: #856404;">{{ _("Bank Account Details") }}</h3>
+        
+        <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+                <td style="padding: 8px 0; font-weight: bold; width: 40%;">{{ _("Bank Name") }}:</td>
+                <td style="padding: 8px 0;">{{ bank_name }}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 0; font-weight: bold;">{{ _("Account Holder") }}:</td>
+                <td style="padding: 8px 0;">{{ account_holder }}</td>
+            </tr>
+            <tr>
+                <td style="padding: 8px 0; font-weight: bold;">{{ _("IBAN") }}:</td>
+                <td style="padding: 8px 0; font-family: monospace; font-size: 14px;">{{ iban }}</td>
+            </tr>
+            {% if bic_swift %}
+            <tr>
+                <td style="padding: 8px 0; font-weight: bold;">{{ _("BIC/SWIFT") }}:</td>
+                <td style="padding: 8px 0; font-family: monospace;">{{ bic_swift }}</td>
+            </tr>
+            {% endif %}
+        </table>
+    </div>
+    
+    <div style="background-color: #d1ecf1; border-left: 4px solid #17a2b8; padding: 15px; margin: 20px 0;">
+        <h4 style="margin-top: 0; color: #0c5460;">{{ _("Important Instructions") }}</h4>
+        <ol style="margin: 0; padding-left: 20px;">
+            <li>{{ _("Please include the Payment Reference <strong>{0}</strong> in the transfer description/concept").format(payment_reference) }}</li>
+            <li>{{ _("After making the transfer, please reply to this email attaching the payment receipt/proof") }}</li>
+            <li>{{ _("Your order will be processed once we confirm the payment") }}</li>
+            <li>{{ _("Processing time: 1-2 business days after payment confirmation") }}</li>
+        </ol>
+        
+        {% if additional_instructions %}
+        <p style="margin-top: 15px;"><strong>{{ _("Additional Notes") }}:</strong><br>{{ additional_instructions }}</p>
+        {% endif %}
+    </div>
+    
+    <p>{{ _("If you have any questions, please reply to this email or contact our support team.") }}</p>
+    
+    <p>{{ _("Best regards") }},<br>
+    <strong>{{ _("Cafés Bay S.L.") }}</strong></p>
+</div>
