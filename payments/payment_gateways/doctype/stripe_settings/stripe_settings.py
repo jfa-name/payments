@@ -374,22 +374,30 @@ def request_bank_transfer(doctype, docname):
         
         # Marcar Sales Order como "On Hold" si es Sales Order
         if doctype == "Sales Order":
-            # IMPORTANTE: Usar ignore_permissions y actualizar con el método correcto
-            frappe.db.set_value(
-                "Sales Order", 
-                docname, 
-                "hold", 
-                _("Awaiting bank transfer payment - Ref: {0}").format(integration_request.name),
-                update_modified=False
-            )
-            
-            # Añadir comentario en el timeline explicando el cambio
-            doc.add_comment(
-                "Info",
-                text=_("Order placed On Hold - Awaiting bank transfer payment confirmation. Payment reference: {0}").format(
-                    integration_request.name
-                )
-            )
+            try:
+                # Usar SQL directo para actualizar, ignorando validaciones
+                frappe.db.sql("""
+                    UPDATE `tabSales Order`
+                    SET status = 'On Hold'
+                    WHERE name = %s
+                """, (docname,))
+                
+                # Añadir comentario en el timeline
+                frappe.get_doc({
+                    "doctype": "Comment",
+                    "comment_type": "Info",
+                    "reference_doctype": doctype,
+                    "reference_name": docname,
+                    "content": _("Order placed On Hold - Awaiting bank transfer payment confirmation. Payment reference: {0}").format(
+                        integration_request.name
+                    )
+                }).insert(ignore_permissions=True)
+                
+                frappe.logger().info(f"Sales Order {docname} marked as On Hold")
+                
+            except Exception as e:
+                frappe.logger().error(f"Error updating Sales Order status: {str(e)}")
+                frappe.log_error(frappe.get_traceback(), "Sales Order On Hold Update Failed")
         
         frappe.db.commit()
         
@@ -475,7 +483,7 @@ def send_bank_transfer_instructions(doc, bank_settings, integration_request_name
         "bic_swift": bank_settings.bic_swift,
         "amount": doc.grand_total if hasattr(doc, "grand_total") else 0,
         "currency": doc.currency if hasattr(doc, "currency") else "EUR",
-        "reference": f"{doc.doctype}-{doc.name}",
+        "reference": f"{doc.name}",
         "payment_reference": integration_request_name,
         "reply_to_email": bank_settings.reply_to_email or frappe.get_value("Email Account", {"default_outgoing": 1}, "email_id"),
         "additional_instructions": bank_settings.additional_instructions or ""
