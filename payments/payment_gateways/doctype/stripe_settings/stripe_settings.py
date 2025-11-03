@@ -331,26 +331,21 @@ def request_bank_transfer(doctype, docname):
     """
     if not doctype or not docname:
         frappe.throw(_("Missing document information"))
-    
-    # Verificar que el documento existe
+
     try:
         doc = frappe.get_doc(doctype, docname)
     except Exception:
         frappe.throw(_("Document not found"))
-    
-    # Verificar permisos (si es guest, verificar que tenga acceso al documento)
+
     if frappe.session.user == "Guest":
-        # Para documentos públicos como Sales Order de carrito web
         if not doc.has_website_permission(frappe.session.user):
             frappe.throw(_("Not permitted"), frappe.PermissionError)
-    
-    # Obtener configuración de transferencia bancaria
+
     bank_settings = frappe.get_single("Bank Transfer Settings")
-    
+
     if not bank_settings or not bank_settings.enabled:
         frappe.throw(_("Bank transfer payment method is not configured"))
-    
-    # Crear Integration Request para tracking
+
     integration_request = frappe.get_doc({
         "doctype": "Integration Request",
         "integration_type": "Remote",
@@ -362,45 +357,42 @@ def request_bank_transfer(doctype, docname):
             "amount": doc.grand_total if hasattr(doc, "grand_total") else 0,
             "currency": doc.currency if hasattr(doc, "currency") else "EUR",
             "customer": doc.customer if hasattr(doc, "customer") else "",
-            "customer_email": doc.contact_email if hasattr(doc, "contact_email") else doc.email_id if hasattr(doc, "email_id") else ""
+            "customer_email": get_customer_email(doc)
         })
     })
     integration_request.insert(ignore_permissions=True)
-    
-    # Enviar email con instrucciones
+    frappe.db.commit()
+
     try:
         send_bank_transfer_instructions(doc, bank_settings, integration_request.name)
         integration_request.db_set("status", "Completed", update_modified=False)
-        
-        # Marcar Sales Order como "On Hold" si es Sales Order
-        if doctype == "Sales Order":
-            try:
-                # Usar SQL directo para actualizar, ignorando validaciones
-                frappe.db.sql("""
-                    UPDATE `tabSales Order`
-                    SET status = 'On Hold'
-                    WHERE name = %s
-                """, (docname,))
-                
-                # Añadir comentario en el timeline
-                frappe.get_doc({
-                    "doctype": "Comment",
-                    "comment_type": "Info",
-                    "reference_doctype": doctype,
-                    "reference_name": docname,
-                    "content": _("Order placed On Hold - Awaiting bank transfer payment confirmation. Payment reference: {0}").format(
-                        integration_request.name
-                    )
-                }).insert(ignore_permissions=True)
-                
-                frappe.logger().info(f"Sales Order {docname} marked as On Hold")
-                
-            except Exception as e:
-                frappe.logger().error(f"Error updating Sales Order status: {str(e)}")
-                frappe.log_error(frappe.get_traceback(), "Sales Order On Hold Update Failed")
-        
         frappe.db.commit()
-        
+
+        if doctype == "Sales Order":
+            frappe.db.set_value(
+                "Sales Order",
+                docname,
+                "status",
+                "On Hold",
+                update_modified=False
+            )
+            frappe.db.commit()
+
+            comment = frappe.get_doc({
+                "doctype": "Comment",
+                "comment_type": "Info",
+                "reference_doctype": doctype,
+                "reference_name": docname,
+                "content": _("Order placed On Hold - Awaiting bank transfer payment confirmation. Payment reference: {0}").format(
+                    integration_request.name
+                )
+            })
+            comment.insert(ignore_permissions=True)
+
+            frappe.db.commit()
+            
+            frappe.logger().info(f"Sales Order {docname} marked as On Hold")
+
         return {
             "success": True,
             "message": _("Bank transfer instructions have been sent to your email"),
@@ -409,6 +401,7 @@ def request_bank_transfer(doctype, docname):
         
     except Exception as e:
         integration_request.db_set("status", "Failed", update_modified=False)
+        frappe.db.commit()
         frappe.log_error(frappe.get_traceback(), "Bank Transfer Request Failed")
         frappe.throw(_("Failed to send email. Please contact support."))
 
@@ -499,6 +492,48 @@ def send_bank_transfer_instructions(doc, bank_settings, integration_request_name
         reference_name=doc.name,
         reply_to=context["reply_to_email"]
     )
+
+@frappe.whitelist()
+def confirm_bank_transfer_payment(sales_order_name):
+    """
+    Confirma que se recibió el pago por transferencia bancaria
+    Libera la Sales Order de "On Hold"
+    """
+    # Solo usuarios con permisos pueden ejecutar esto
+    if not frappe.has_permission("Sales Order", "write"):
+        frappe.throw(_("Not permitted"), frappe.PermissionError)
+    
+    doc = frappe.get_doc("Sales Order", sales_order_name)
+    
+    if doc.status != "On Hold":
+        frappe.throw(_("This order is not on hold"))
+    
+    # Actualizar estado
+    frappe.db.set_value(
+        "Sales Order",
+        sales_order_name,
+        "status",
+        "To Deliver and Bill",
+        update_modified=False
+    )
+    
+    frappe.db.commit()
+    
+    # Añadir comentario
+    comment = frappe.get_doc({
+        "doctype": "Comment",
+        "comment_type": "Info",
+        "reference_doctype": "Sales Order",
+        "reference_name": sales_order_name,
+        "content": _("Bank transfer payment confirmed. Order released and ready for processing.")
+    })
+    comment.insert(ignore_permissions=True)
+    
+    frappe.db.commit()
+    
+    frappe.msgprint(_("Payment confirmed. Order is now ready for delivery."))
+    
+    return {"success": True}
 
 def get_gateway_controller(doctype, docname):
     reference_doc = frappe.get_doc(doctype, docname)
